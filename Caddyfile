@@ -1,0 +1,22 @@
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:3000
+}
+
+# Older ZKTeco/eSSL firmwares speak plain HTTP only and cannot follow redirects.
+http://{$DOMAIN} {
+	handle /iclock/* {
+		reverse_proxy web:3000
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}
+
+# ADMS default port; terminals configured by IP land here.
+:8081 {
+	handle /iclock/* {
+		reverse_proxy web:3000
+	}
+	respond 404
+}

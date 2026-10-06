@@ -1,0 +1,35 @@
+export const REPORTS = {
+  daily: "Daily attendance",
+  muster: "Monthly muster roll",
+  late: "Late arrivals",
+  early: "Early exits",
+  absent: "Absentees",
+  overtime: "Overtime",
+  leave: "Leave register",
+  dept: "Worked hours by department",
+  punches: "Device punch log",
+  payroll: "Payroll export",
+  employees: "Employee list",
+} as const;
+export type ReportKind = keyof typeof REPORTS;
+
+export const PAYROLL_FIELDS = {
+  code: "Employee code",
+  name: "Name",
+  department: "Department",
+  designation: "Designation",
+  branch: "Branch",
+  presentDays: "Present days",
+  halfDays: "Half days",
+  absentDays: "Absent days",
+  leaveDays: "Leave days",
+  paidLeaveDays: "Paid leave days",
+  holidays: "Holidays",
+  weekOffs: "Week offs",
+  payableDays: "Payable days",
+  workedHours: "Worked hours",
+  lateCount: "Late count",
+  lateMinutes: "Late minutes",
+  earlyMinutes: "Early-exit minutes",
+  otHours: "Overtime hours",
+} as const;

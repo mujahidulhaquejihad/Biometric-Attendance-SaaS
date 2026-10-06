@@ -1,0 +1,711 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Better Auth (core + organization + twoFactor plugins) ----------
+
+model User {
+  id               String         @id @default(cuid())
+  name             String
+  email            String         @unique
+  emailVerified    Boolean        @default(false)
+  image            String?
+  twoFactorEnabled Boolean?       @default(false)
+  isSuperAdmin     Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  sessions         Session[]
+  accounts         Account[]
+  members          Member[]
+  invitations      Invitation[]
+  twofactors       TwoFactor[]
+  employees        Employee[]
+  notifications    Notification[]
+
+  @@map("user")
+}
+
+model Session {
+  id                   String   @id @default(cuid())
+  expiresAt            DateTime
+  token                String   @unique
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganizationId String?
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String?      @unique
+  logo        String?
+  metadata    String?
+  createdAt   DateTime     @default(now())
+  members     Member[]
+  invitations Invitation[]
+
+  @@map("organization")
+}
+
+/// role: admin | hr | manager | employee | security
+model Member {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@map("member")
+}
+
+model Invitation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String?
+  status         String
+  expiresAt      DateTime
+  inviterId      String
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@map("invitation")
+}
+
+model TwoFactor {
+  id                      String    @id @default(cuid())
+  secret                  String
+  backupCodes             String
+  userId                  String
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+
+  @@index([secret])
+  @@map("twoFactor")
+}
+
+// ---------- Enums ----------
+
+enum DeviceVendor {
+  ZKTECO_ADMS
+  ZK_PULL
+  HIKVISION
+  SUPREMA_BIOSTAR
+  ANVIZ_CLOUD
+  AGENT
+}
+
+enum DeviceStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+}
+
+enum CommandStatus {
+  PENDING
+  SENT
+  DONE
+  FAILED
+}
+
+enum PunchSource {
+  DEVICE
+  AGENT
+  MANUAL
+  API
+  IMPORT
+  WEB
+}
+
+enum Direction {
+  IN
+  OUT
+}
+
+enum DayStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LEAVE
+  HOLIDAY
+  WEEK_OFF
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum TemplateFormat {
+  ZK_V10
+  SUPREMA
+  ISO19794
+  SOURCEAFIS
+}
+
+enum Accrual {
+  YEARLY
+  MONTHLY
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubStatus {
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+}
+
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+// ---------- Tenant settings ----------
+// organizationId defaults read the never-set app.org_id setting: tenantDb() always injects the
+// real value, so a create that bypasses it fails loudly instead of writing an unscoped row.
+
+model OrgSettings {
+  id                 String    @id @default(cuid())
+  organizationId     String    @unique @default(dbgenerated("current_setting('app.org_id')"))
+  timezone           String    @default("UTC")
+  weekOffs           Int[]     @default([0])
+  missingPunchStatus DayStatus @default(PRESENT)
+  autoDeductBreak    Boolean   @default(true)
+  dedupeMinutes      Int       @default(2)
+  otRequiresApproval Boolean   @default(false)
+  notifyLate         Boolean   @default(true)
+  digestHour         Int       @default(10)
+  /// let employees punch from a phone/browser (GPS-checked against their branch)
+  webPunch           Boolean   @default(false)
+  /// { "Header in export": "fieldKey" }
+  payrollColumns     Json?
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  organizationId   String    @unique @default(dbgenerated("current_setting('app.org_id')"))
+  plan             Plan      @default(FREE)
+  status           SubStatus @default(ACTIVE)
+  maxEmployees     Int       @default(25)
+  maxDevices       Int       @default(2)
+  currentPeriodEnd DateTime?
+}
+
+// ---------- Organization structure ----------
+
+model Branch {
+  id             String     @id @default(cuid())
+  organizationId String     @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  code           String?
+  timezone       String?
+  address        String?
+  lat            Float?
+  lng            Float?
+  /// geofence for web/mobile punches
+  radiusM        Int        @default(200)
+  employees      Employee[]
+  devices        Device[]
+  holidays       Holiday[]
+
+  @@unique([organizationId, name])
+}
+
+model Department {
+  id             String     @id @default(cuid())
+  organizationId String     @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  employees      Employee[]
+
+  @@unique([organizationId, name])
+}
+
+model Designation {
+  id             String     @id @default(cuid())
+  organizationId String     @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  employees      Employee[]
+
+  @@unique([organizationId, name])
+}
+
+/// code = the user ID/PIN stored on terminals
+model Employee {
+  id               String              @id @default(cuid())
+  organizationId   String              @default(dbgenerated("current_setting('app.org_id')"))
+  code             String
+  name             String
+  email            String?
+  phone            String?
+  photoUrl         String?
+  branchId         String?
+  branch           Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  departmentId     String?
+  department       Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  designationId    String?
+  designation      Designation?        @relation(fields: [designationId], references: [id], onDelete: SetNull)
+  managerId        String?
+  manager          Employee?           @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports          Employee[]          @relation("Manager")
+  defaultShiftId   String?
+  defaultShift     Shift?              @relation(fields: [defaultShiftId], references: [id], onDelete: SetNull)
+  userId           String?
+  user             User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  joinDate         DateTime?           @db.Date
+  birthDate        DateTime?           @db.Date
+  active           Boolean             @default(true)
+  createdAt        DateTime            @default(now())
+  templates        BiometricTemplate[]
+  consents         Consent[]
+  punches          Punch[]
+  days             AttendanceDay[]
+  assignments      ShiftAssignment[]
+  leaveRequests    LeaveRequest[]
+  leaveBalances    LeaveBalance[]
+  regularizations  Regularization[]
+  overtimeRequests OvertimeRequest[]
+  compOffRequests  CompOffRequest[]
+  visitors         Visitor[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, userId])
+}
+
+// ---------- Biometrics ----------
+
+model Consent {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  signedName     String
+  ip             String?
+  recordedById   String?
+  givenAt        DateTime  @default(now())
+  revokedAt      DateTime?
+}
+
+/// data = AES-256-GCM(iv|tag|ciphertext) with a per-tenant key
+model BiometricTemplate {
+  id             String         @id @default(cuid())
+  organizationId String         @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  finger         Int
+  format         TemplateFormat
+  data           Bytes
+  createdAt      DateTime       @default(now())
+
+  @@unique([employeeId, finger, format])
+}
+
+// ---------- Devices ----------
+
+model Device {
+  id              String          @id @default(cuid())
+  organizationId  String?
+  branchId        String?
+  branch          Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  name            String          @default("Device")
+  vendor          DeviceVendor
+  serial          String?
+  tokenHash       String?         @unique
+  status          DeviceStatus    @default(PENDING)
+  allowedIps      String[]
+  /// encrypted JSON (IP/port, API credentials, sync cursor)
+  config          String?
+  firmware        String?
+  ip              String?
+  lastSeenAt      DateTime?
+  offlineNotified Boolean         @default(false)
+  attStamp        String?
+  opStamp         String?
+  createdAt       DateTime        @default(now())
+  commands        DeviceCommand[]
+  punches         Punch[]
+
+  @@unique([vendor, serial])
+}
+
+model DeviceCommand {
+  id             String        @id @default(cuid())
+  seq            Int           @unique @default(autoincrement())
+  organizationId String        @default(dbgenerated("current_setting('app.org_id')"))
+  deviceId       String
+  device         Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  command        String
+  status         CommandStatus @default(PENDING)
+  result         String?
+  createdAt      DateTime      @default(now())
+  sentAt         DateTime?
+  doneAt         DateTime?
+
+  @@index([deviceId, status])
+}
+
+// ---------- Attendance ----------
+
+/// Immutable raw punch. Corrections are new MANUAL punches, never edits.
+model Punch {
+  id             String      @id @default(cuid())
+  organizationId String      @default(dbgenerated("current_setting('app.org_id')"))
+  employeeCode   String
+  employeeId     String?
+  employee       Employee?   @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  deviceId       String?
+  device         Device?     @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  timestamp      DateTime
+  verifyMode     String?
+  direction      Direction?
+  source         PunchSource
+  note           String?
+  createdById    String?
+  createdAt      DateTime    @default(now())
+
+  @@unique([deviceId, employeeCode, timestamp])
+  @@index([organizationId, timestamp])
+  @@index([employeeId, timestamp])
+}
+
+model PunchPhoto {
+  id             String   @id @default(cuid())
+  organizationId String   @default(dbgenerated("current_setting('app.org_id')"))
+  deviceId       String
+  employeeCode   String
+  timestamp      DateTime
+  data           Bytes
+
+  @@index([deviceId, employeeCode, timestamp])
+}
+
+model Shift {
+  id             String            @id @default(cuid())
+  organizationId String            @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  color          String            @default("#3b82f6")
+  startMinute    Int
+  endMinute      Int
+  graceIn        Int               @default(10)
+  graceOut       Int               @default(10)
+  breakMinutes   Int               @default(60)
+  halfDayMinutes Int               @default(240)
+  fullDayMinutes Int               @default(420)
+  otThreshold    Int               @default(30)
+  otMax          Int               @default(0)
+  windowBefore   Int               @default(240)
+  windowAfter    Int               @default(240)
+  weekOffs       Int[]             @default([0])
+  employees      Employee[]
+  assignments    ShiftAssignment[]
+}
+
+/// shiftId = null means an explicit day off
+model ShiftAssignment {
+  id             String   @id @default(cuid())
+  organizationId String   @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime @db.Date
+  shiftId        String?
+  shift          Shift?   @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+}
+
+model Holiday {
+  id             String   @id @default(cuid())
+  organizationId String   @default(dbgenerated("current_setting('app.org_id')"))
+  date           DateTime @db.Date
+  name           String
+  branchId       String?
+  branch         Branch?  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, date])
+}
+
+model AttendanceDay {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime  @db.Date
+  status         DayStatus
+  firstIn        DateTime?
+  lastOut        DateTime?
+  workedMinutes  Int       @default(0)
+  lateMinutes    Int       @default(0)
+  earlyMinutes   Int       @default(0)
+  otMinutes      Int       @default(0)
+  missingPunch   Boolean   @default(false)
+  shiftId        String?
+  locked         Boolean   @default(false)
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([employeeId, date])
+  @@index([organizationId, date])
+}
+
+// ---------- Workflows ----------
+
+model LeaveType {
+  id              String         @id @default(cuid())
+  organizationId  String         @default(dbgenerated("current_setting('app.org_id')"))
+  name            String
+  code            String
+  paid            Boolean        @default(true)
+  annualQuota     Float          @default(0)
+  accrual         Accrual        @default(YEARLY)
+  carryForwardMax Float          @default(0)
+  active          Boolean        @default(true)
+  requests        LeaveRequest[]
+  balances        LeaveBalance[]
+
+  @@unique([organizationId, code])
+}
+
+/// Manual adjustments and carry-forward; allocation and usage are computed.
+model LeaveBalance {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId    String
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  year           Int
+  adjustment     Float     @default(0)
+  note           String?
+
+  @@unique([employeeId, leaveTypeId, year])
+}
+
+model LeaveRequest {
+  id             String        @id @default(cuid())
+  organizationId String        @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId    String
+  leaveType      LeaveType     @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  fromDate       DateTime      @db.Date
+  toDate         DateTime      @db.Date
+  halfDay        Boolean       @default(false)
+  days           Float
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, status])
+}
+
+model Regularization {
+  id             String        @id @default(cuid())
+  organizationId String        @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime      @db.Date
+  inTime         String?
+  outTime        String?
+  reason         String
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, status])
+}
+
+model OvertimeRequest {
+  id             String        @id @default(cuid())
+  organizationId String        @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime      @db.Date
+  minutes        Int
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, status])
+}
+
+/// Worked a holiday/week-off; approval credits `days` to the "CO" leave type.
+model CompOffRequest {
+  id             String        @id @default(cuid())
+  organizationId String        @default(dbgenerated("current_setting('app.org_id')"))
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime      @db.Date
+  days           Float
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, status])
+}
+
+model Notice {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  title          String
+  body           String
+  pinned         Boolean   @default(false)
+  expiresOn      DateTime? @db.Date
+  createdById    String?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model Visitor {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  phone          String?
+  company        String?
+  purpose        String?
+  badge          String?
+  hostId         String?
+  host           Employee? @relation(fields: [hostId], references: [id], onDelete: SetNull)
+  checkIn        DateTime  @default(now())
+  checkOut       DateTime?
+}
+
+// ---------- Platform plumbing ----------
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String?
+  userId         String?
+  action         String
+  entity         String
+  entityId       String?
+  data           Json?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  body           String?
+  link           String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  name           String
+  prefix         String
+  keyHash        String    @unique
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+/// secret is encrypted with the tenant key
+model Webhook {
+  id             String   @id @default(cuid())
+  organizationId String   @default(dbgenerated("current_setting('app.org_id')"))
+  url            String
+  secret         String
+  events         String[]
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+}
+
+model ReportSchedule {
+  id             String    @id @default(cuid())
+  organizationId String    @default(dbgenerated("current_setting('app.org_id')"))
+  kind           String
+  format         String
+  frequency      Frequency
+  hour           Int
+  recipients     String[]
+  lastSentAt     DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+model IngestLog {
+  id             String   @id @default(cuid())
+  organizationId String?
+  source         String
+  deviceSerial   String?
+  level          String
+  message        String
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+}

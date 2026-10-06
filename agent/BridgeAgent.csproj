@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BridgeAgent</RootNamespace>
+    <AssemblyName>BridgeAgent</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="SourceAFIS" Version="3.14.0" />
+  </ItemGroup>
+
+  <!--
+    Vendor scanner SDKs are licensed separately. Copy a vendor's .NET wrapper DLL into lib\
+    and rebuild: that scanner is compiled in automatically. Windows Biometric Framework
+    support needs no SDK.
+  -->
+  <PropertyGroup Condition="Exists('lib\SecuGen.FDxSDKPro.Windows.dll')">
+    <DefineConstants>$(DefineConstants);SECUGEN</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('lib\SecuGen.FDxSDKPro.Windows.dll')">
+    <Reference Include="SecuGen.FDxSDKPro.Windows" HintPath="lib\SecuGen.FDxSDKPro.Windows.dll" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="Exists('lib\DPUruNet.dll')">
+    <DefineConstants>$(DefineConstants);DIGITALPERSONA</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('lib\DPUruNet.dll')">
+    <Reference Include="DPUruNet" HintPath="lib\DPUruNet.dll" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="Exists('lib\libzkfpcsharp.dll')">
+    <DefineConstants>$(DefineConstants);ZKFINGER</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('lib\libzkfpcsharp.dll')">
+    <Reference Include="libzkfpcsharp" HintPath="lib\libzkfpcsharp.dll" />
+  </ItemGroup>
+
+</Project>
